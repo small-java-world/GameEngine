@@ -37,23 +37,24 @@ namespace MyEngine.Tests.Core
         [Fact]
         public void TitleToOfficeScene_WhenSpaceKeyPressed_TransitionShouldOccur()
         {
-            // 1) タイトルシーンを開始
+            // 1) エンジンとタイトルシーンを初期化
             _engine.Initialize();
             _engine.SceneManager.ChangeScene<TitleScene>();
             Assert.IsType<TitleScene>(_engine.SceneManager.CurrentScene);
 
-            // 2) 10フレーム目でスペースキーを押す
-            _input.SetKeyState(KeyCode.Space, true);
+            // 2) まず5フレーム実行してTitleSceneの描画を確認
+            _engine.Run(maxFrame: 5);
+            Assert.Contains(_graphics.DrawCalls, call => call.StartsWith("DrawTexture(title_bg"));
+            Assert.Contains(_graphics.DrawCalls, call => call.StartsWith("DrawTexture(press_space"));
 
-            // 3) エンジンを20フレーム実行
-            _engine.Run(maxFrame: 20);
+            // 3) スペースキーを押して、さらに5フレーム実行
+            _input.SetKeyState(KeyCode.Space, true);
+            _engine.Run(maxFrame: 5);
 
             // 4) オフィスシーンに遷移していることを確認
             Assert.IsType<OfficeScene>(_engine.SceneManager.CurrentScene);
 
-            // 5) 描画とオーディオの呼び出しを確認
-            Assert.Contains(_graphics.DrawCalls, call => call.StartsWith("DrawTexture(title_bg"));
-            Assert.Contains(_graphics.DrawCalls, call => call.StartsWith("DrawTexture(press_space"));
+            // 5) オーディオの呼び出しを確認
             Assert.Contains(_audio.AudioCalls, call => call.StartsWith("PlayBgm(office_bgm"));
         }
     }
