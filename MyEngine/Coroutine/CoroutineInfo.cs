@@ -88,23 +88,15 @@ public class CoroutineInfo
         var oldState = _state;
         _state = newState;
 
-        // 子コルーチンの状態も更新
         switch (newState)
         {
-            case CoroutineState.Paused:
-                foreach (var child in Children.ToList())
-                {
-                    child.SetState(CoroutineState.Paused);
-                }
-                break;
-
             case CoroutineState.Running:
                 if (Children.Any())
                 {
                     _state = CoroutineState.Waiting;
-                    foreach (var child in Children.ToList())
+                    foreach (var child in Children)
                     {
-                        if (child.State != CoroutineState.Completed)
+                        if (child.State != CoroutineState.Completed && child.State != CoroutineState.Paused)
                         {
                             child.SetState(CoroutineState.Running);
                         }
@@ -112,8 +104,22 @@ public class CoroutineInfo
                 }
                 break;
 
+            case CoroutineState.Paused:
+                foreach (var child in Children)
+                {
+                    child.SetState(CoroutineState.Paused);
+                }
+                break;
+
+            case CoroutineState.Completed:
+                foreach (var child in Children)
+                {
+                    child.SetState(CoroutineState.Completed);
+                }
+                break;
+
             case CoroutineState.Waiting:
-                foreach (var child in Children.ToList())
+                foreach (var child in Children)
                 {
                     if (child.State != CoroutineState.Completed && child.State != CoroutineState.Paused)
                     {
@@ -121,20 +127,9 @@ public class CoroutineInfo
                     }
                 }
                 break;
-
-            case CoroutineState.Completed:
-                foreach (var child in Children.ToList())
-                {
-                    child.SetState(CoroutineState.Completed);
-                }
-                if (_currentYieldInstruction is IDisposable disposable)
-                {
-                    disposable.Dispose();
-                }
-                _currentYieldInstruction = null;
-                break;
         }
 
+        // 状態が変更されたことを通知
         StateChanged?.Invoke(this, newState);
     }
 
