@@ -18,11 +18,13 @@ namespace MyEngine.Coroutine
         public CoroutineState State { get; set; }
         public CoroutineInfo? Parent { get; set; }
         public CoroutineInfo? Child { get; set; }
+        public bool NeedsAdvance { get; set; }
 
         public CoroutineInfo(IEnumerator routine)
         {
             Routine = routine;
             State = CoroutineState.初期化中;
+            NeedsAdvance = false;
         }
     }
 
@@ -62,6 +64,25 @@ namespace MyEngine.Coroutine
             info.State = CoroutineState.実行中;
             OnCoroutineStateChanged(info);
             info.Routine.MoveNext();
+
+            // ネストされたコルーチンの処理
+            if (info.Routine.Current is IEnumerator nestedRoutine)
+            {
+                var childInfo = new CoroutineInfo(nestedRoutine)
+                {
+                    Parent = info,
+                    State = CoroutineState.初期化中
+                };
+                info.Child = childInfo;
+                OnCoroutineStateChanged(childInfo);
+                
+                childInfo.State = CoroutineState.実行中;
+                OnCoroutineStateChanged(childInfo);
+                nestedRoutine.MoveNext();
+                
+                info.State = CoroutineState.待機中;
+                OnCoroutineStateChanged(info);
+            }
         }
 
         public void Stop(IEnumerator routine)
@@ -99,7 +120,10 @@ namespace MyEngine.Coroutine
 
             // アクティブなコルーチンの更新
             var completedRoutines = new List<CoroutineInfo>();
-            foreach (var info in _coroutines.ToList())
+            var routinesToUpdate = _coroutines.ToList();
+
+            // 親コルーチンを先に処理
+            foreach (var info in routinesToUpdate.Where(x => x.Parent == null))
             {
                 if (!ProcessCoroutine(info, deltaTime))
                 {
@@ -125,16 +149,21 @@ namespace MyEngine.Coroutine
                 {
                     if (!ProcessCoroutine(info.Child, deltaTime))
                     {
-                        // 子コルーチンが完了したら、その結果を処理
-                        var childResult = info.Child.Routine.Current;
+                        // 子コルーチンが完了したら、親コルーチンを待機状態に
                         info.Child = null;
-                        
-                        // 親コルーチンを再開
-                        info.State = CoroutineState.実行中;
+                        info.State = CoroutineState.待機中;
                         OnCoroutineStateChanged(info);
-                        return info.Routine.MoveNext();
+                        return true;  // 親コルーチンの進行は次のフレームで行う
                     }
                     return true;
+                }
+
+                // 待機状態の親コルーチンを進行
+                if (info.State == CoroutineState.待機中 && info.Child == null)
+                {
+                    info.State = CoroutineState.実行中;
+                    OnCoroutineStateChanged(info);
+                    return info.Routine.MoveNext();
                 }
 
                 var current = info.Routine.Current;
