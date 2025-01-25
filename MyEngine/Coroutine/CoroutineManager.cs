@@ -4,125 +4,193 @@ using Microsoft.Extensions.Logging;
 
 namespace MyEngine.Coroutine
 {
+    public enum CoroutineState
+    {
+        初期化中,
+        実行中,
+        待機中,
+        完了
+    }
+
+    public class CoroutineInfo
+    {
+        public IEnumerator Routine { get; }
+        public CoroutineState State { get; set; }
+        public CoroutineInfo? Parent { get; set; }
+        public CoroutineInfo? Child { get; set; }
+
+        public CoroutineInfo(IEnumerator routine)
+        {
+            Routine = routine;
+            State = CoroutineState.初期化中;
+        }
+    }
+
     public class CoroutineManager
     {
         private readonly ILogger<CoroutineManager> _logger;
-        private readonly List<IEnumerator> _coroutines = new();
+        private readonly List<CoroutineInfo> _coroutines = new();
         private readonly List<IEnumerator> _coroutinesToAdd = new();
         private readonly List<IEnumerator> _coroutinesToRemove = new();
+
+        public event EventHandler<CoroutineInfo>? CoroutineStateChanged;
+
+        public int ActiveCoroutineCount => _coroutines.Count + _coroutinesToAdd.Count;
 
         public CoroutineManager(ILogger<CoroutineManager> logger)
         {
             _logger = logger;
         }
 
+        private void OnCoroutineStateChanged(CoroutineInfo info)
+        {
+            _logger.LogDebug($"コルーチン状態変更: {info.State}");
+            CoroutineStateChanged?.Invoke(this, info);
+        }
+
         public void Start(IEnumerator routine)
         {
             _logger.LogDebug("コルーチン開始");
-            _coroutinesToAdd.Add(routine);
-            routine.MoveNext(); // 最初のyieldまで進める
+            var info = new CoroutineInfo(routine);
+            _coroutines.Add(info);
+            
+            // 初期化
+            info.State = CoroutineState.初期化中;
+            OnCoroutineStateChanged(info);
+            
+            // 最初のMoveNextを呼び出し
+            info.State = CoroutineState.実行中;
+            OnCoroutineStateChanged(info);
+            info.Routine.MoveNext();
         }
 
         public void Stop(IEnumerator routine)
         {
-            _logger.LogDebug("コルーチン停止");
             _coroutinesToRemove.Add(routine);
         }
 
         public void StopAll()
         {
-            _logger.LogInformation("全コルーチン停止");
-            _coroutinesToRemove.AddRange(_coroutines);
+            foreach (var info in _coroutines)
+            {
+                _coroutinesToRemove.Add(info.Routine);
+            }
             _coroutinesToAdd.Clear();
         }
 
         public void Update(float deltaTime)
         {
-            // 新しいコルーチンを追加
-            if (_coroutinesToAdd.Count > 0)
+            // 停止したコルーチンの削除
+            foreach (var routine in _coroutinesToRemove)
             {
-                _coroutines.AddRange(_coroutinesToAdd);
-                _coroutinesToAdd.Clear();
+                var info = _coroutines.Find(x => x.Routine == routine);
+                if (info != null)
+                {
+                    if (info.Child != null)
+                    {
+                        _coroutinesToRemove.Add(info.Child.Routine);
+                    }
+                    info.State = CoroutineState.完了;
+                    OnCoroutineStateChanged(info);
+                    _coroutines.Remove(info);
+                }
+            }
+            _coroutinesToRemove.Clear();
+
+            // アクティブなコルーチンの更新
+            var completedRoutines = new List<CoroutineInfo>();
+            foreach (var info in _coroutines.ToList())
+            {
+                if (!ProcessCoroutine(info, deltaTime))
+                {
+                    completedRoutines.Add(info);
+                }
             }
 
-            // 停止要求のあるコルーチンを削除
-            if (_coroutinesToRemove.Count > 0)
+            // 完了したコルーチンの削除
+            foreach (var completed in completedRoutines)
             {
-                foreach (var routine in _coroutinesToRemove)
-                {
-                    _coroutines.Remove(routine);
-                }
-                _coroutinesToRemove.Clear();
-            }
-
-            // 各コルーチンを更新
-            for (int i = _coroutines.Count - 1; i >= 0; i--)
-            {
-                var routine = _coroutines[i];
-                bool shouldContinue = true;
-
-                try
-                {
-                    var current = routine.Current;
-                    if (current is IYieldInstruction yieldInstruction)
-                    {
-                        shouldContinue = yieldInstruction.Update(deltaTime);
-                    }
-                    else if (current is IEnumerator nestedRoutine)
-                    {
-                        // ネストされたコルーチンを初回実行または継続実行
-                        if (nestedRoutine.Current == null)
-                        {
-                            if (!nestedRoutine.MoveNext())
-                            {
-                                // ネストされたコルーチンが即座に完了した場合
-                                shouldContinue = routine.MoveNext();
-                                continue;
-                            }
-                        }
-
-                        // ネストされたコルーチンの現在の状態を処理
-                        if (nestedRoutine.Current is IYieldInstruction nestedYield)
-                        {
-                            // 待機命令を処理
-                            shouldContinue = nestedYield.Update(deltaTime);
-                            if (shouldContinue)
-                            {
-                                // 待機が完了したら次のステップへ
-                                if (!nestedRoutine.MoveNext())
-                                {
-                                    // ネストされたコルーチンが完了したら親コルーチンを進める
-                                    shouldContinue = routine.MoveNext();
-                                    continue;
-                                }
-                            }
-                        }
-                        else if (nestedRoutine.Current == null)
-                        {
-                            // ネストされたコルーチンが完了したら親コルーチンを進める
-                            shouldContinue = routine.MoveNext();
-                            continue;
-                        }
-                        
-                        // ネストされたコルーチンがまだ実行中
-                        shouldContinue = false;
-                    }
-
-                    if (shouldContinue && !routine.MoveNext())
-                    {
-                        _logger.LogDebug("コルーチン完了");
-                        _coroutines.RemoveAt(i);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "コルーチン実行中にエラー発生");
-                    _coroutines.RemoveAt(i);
-                }
+                completed.State = CoroutineState.完了;
+                OnCoroutineStateChanged(completed);
+                _coroutines.Remove(completed);
             }
         }
 
-        public int ActiveCoroutineCount => _coroutines.Count;
+        private bool ProcessCoroutine(CoroutineInfo info, float deltaTime)
+        {
+            try
+            {
+                // 子コルーチンの処理を優先
+                if (info.Child != null)
+                {
+                    if (!ProcessCoroutine(info.Child, deltaTime))
+                    {
+                        // 子コルーチンが完了したら、その結果を処理
+                        var childResult = info.Child.Routine.Current;
+                        info.Child = null;
+                        
+                        // 親コルーチンを再開
+                        info.State = CoroutineState.実行中;
+                        OnCoroutineStateChanged(info);
+                        return info.Routine.MoveNext();
+                    }
+                    return true;
+                }
+
+                var current = info.Routine.Current;
+
+                // ネストされたコルーチンの処理
+                if (current is IEnumerator nestedRoutine)
+                {
+                    var childInfo = new CoroutineInfo(nestedRoutine)
+                    {
+                        Parent = info,
+                        State = CoroutineState.初期化中
+                    };
+                    info.Child = childInfo;
+                    OnCoroutineStateChanged(childInfo);
+                    
+                    childInfo.State = CoroutineState.実行中;
+                    OnCoroutineStateChanged(childInfo);
+                    nestedRoutine.MoveNext();
+                    
+                    info.State = CoroutineState.待機中;
+                    OnCoroutineStateChanged(info);
+                    return true;
+                }
+
+                // 待機命令の処理
+                if (current is IYieldInstruction yieldInstruction)
+                {
+                    if (info.State != CoroutineState.待機中)
+                    {
+                        info.State = CoroutineState.待機中;
+                        OnCoroutineStateChanged(info);
+                    }
+
+                    if (yieldInstruction.Update(deltaTime))
+                    {
+                        info.State = CoroutineState.実行中;
+                        OnCoroutineStateChanged(info);
+                        return info.Routine.MoveNext();
+                    }
+                    return true;
+                }
+
+                // その他の場合は次のステップへ
+                if (info.State != CoroutineState.実行中)
+                {
+                    info.State = CoroutineState.実行中;
+                    OnCoroutineStateChanged(info);
+                }
+                return info.Routine.MoveNext();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "コルーチン実行エラー");
+                return false;
+            }
+        }
     }
 
     public interface IYieldInstruction
