@@ -3,143 +3,106 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.Logging;
 
-namespace MyEngine.Coroutine;
-
-public class CoroutineInfo
+namespace MyEngine.Coroutine
 {
-    private readonly ILogger _logger;
-    private readonly List<CoroutineInfo> _children = new();
-    private CoroutineState _state = CoroutineState.Running;
-    private IYieldInstruction? _currentYieldInstruction;
-    private bool _isFirstUpdate = true;
-
-    public event EventHandler<CoroutineState>? StateChanged;
-
-    public IEnumerator<IYieldInstruction> Routine { get; }
-    public IReadOnlyList<CoroutineInfo> Children => _children;
-    public CoroutineState State => _state;
-    public IYieldInstruction? CurrentYieldInstruction => _currentYieldInstruction;
-    public bool IsFirstUpdate => _isFirstUpdate;
-
-    public CoroutineInfo(IEnumerator<IYieldInstruction> routine, ILogger logger)
+    public class CoroutineInfo
     {
-        Routine = routine ?? throw new ArgumentNullException(nameof(routine));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    }
+        private readonly ILogger _logger;
+        private readonly List<CoroutineInfo> _children = new();
+        private CoroutineState _state = CoroutineState.Running;
+        private IYieldInstruction? _currentYieldInstruction;
+        private bool _isFirstUpdate = true;
 
-    public void AddChild(CoroutineInfo child)
-    {
-        if (child == null) throw new ArgumentNullException(nameof(child));
-        _children.Add(child);
+        public event EventHandler<CoroutineState>? StateChanged;
 
-        if (_state == CoroutineState.Paused)
+        public IEnumerator<IYieldInstruction> Routine { get; }
+        public IReadOnlyList<CoroutineInfo> Children => _children;
+        public CoroutineState State => _state;
+        public IYieldInstruction? CurrentYieldInstruction => _currentYieldInstruction;
+        public bool IsFirstUpdate => _isFirstUpdate;
+
+        public CoroutineInfo(IEnumerator<IYieldInstruction> routine, ILogger logger)
         {
-            child.SetState(CoroutineState.Paused);
+            Routine = routine ?? throw new ArgumentNullException(nameof(routine));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
-        else if (_state == CoroutineState.Running)
-        {
-            SetState(CoroutineState.Waiting);
-        }
-    }
 
-    public void RemoveChild(CoroutineInfo child)
-    {
-        if (child == null) throw new ArgumentNullException(nameof(child));
-        _children.Remove(child);
-
-        if (_children.Count == 0 && _state == CoroutineState.Waiting)
+        public void AddChild(CoroutineInfo child)
         {
-            SetState(CoroutineState.Running);
-        }
-    }
-
-    public void SetYieldInstruction(IYieldInstruction? instruction)
-    {
-        if (_currentYieldInstruction is IDisposable disposable)
-        {
-            try
+            _children.Add(child);
+            if (_state == CoroutineState.Paused)
             {
-                disposable.Dispose();
-            }
-            catch (ObjectDisposedException)
-            {
-                // 既に破棄されている場合は無視
+                child.SetState(CoroutineState.Paused);
             }
         }
 
-        _currentYieldInstruction = instruction;
-        if (instruction == null && _state == CoroutineState.Waiting)
+        public void RemoveChild(CoroutineInfo child)
         {
-            SetState(CoroutineState.Running);
-        }
-        else if (instruction != null && _state == CoroutineState.Running)
-        {
-            SetState(CoroutineState.Waiting);
-        }
-    }
-
-    public void SetState(CoroutineState newState)
-    {
-        if (_state == newState)
-        {
-            return;
+            _children.Remove(child);
         }
 
-        var oldState = _state;
-        _state = newState;
-
-        switch (newState)
+        public void SetYieldInstruction(IYieldInstruction? instruction)
         {
-            case CoroutineState.Running:
-                if (Children.Any())
+            if (_currentYieldInstruction is IDisposable disposable)
+            {
+                try
                 {
-                    _state = CoroutineState.Waiting;
-                    foreach (var child in Children)
-                    {
-                        if (child.State != CoroutineState.Completed && child.State != CoroutineState.Paused)
-                        {
-                            child.SetState(CoroutineState.Running);
-                        }
-                    }
+                    disposable.Dispose();
                 }
-                break;
+                catch (ObjectDisposedException)
+                {
+                    // ignore
+                }
+            }
 
-            case CoroutineState.Paused:
-                foreach (var child in Children)
-                {
-                    child.SetState(CoroutineState.Paused);
-                }
-                break;
-
-            case CoroutineState.Completed:
-                foreach (var child in Children)
-                {
-                    child.SetState(CoroutineState.Completed);
-                }
-                break;
-
-            case CoroutineState.Waiting:
-                foreach (var child in Children)
-                {
-                    if (child.State != CoroutineState.Completed && child.State != CoroutineState.Paused)
-                    {
-                        child.SetState(CoroutineState.Running);
-                    }
-                }
-                break;
+            _currentYieldInstruction = instruction;
         }
 
-        // 状態が変更されたことを通知
-        StateChanged?.Invoke(this, newState);
-    }
+        public void SetState(CoroutineState newState)
+        {
+            if (_state == newState)
+            {
+                return;
+            }
+            var oldState = _state;
+            _state = newState;
 
-    public void MarkFirstUpdateComplete()
-    {
-        _isFirstUpdate = false;
-    }
+            if (newState == CoroutineState.Paused)
+            {
+                // 子も一緒にPause
+                foreach (var c in _children)
+                {
+                    c.SetState(CoroutineState.Paused);
+                }
+            }
+            else if (newState == CoroutineState.Completed)
+            {
+                // 子も完了
+                foreach (var c in _children.ToList())
+                {
+                    c.SetState(CoroutineState.Completed);
+                    RemoveChild(c);
+                }
+                // Dispose current yield
+                if (_currentYieldInstruction is IDisposable d2)
+                {
+                    d2.Dispose();
+                }
+                _currentYieldInstruction = null;
+            }
 
-    public void ResetFirstUpdate()
-    {
-        _isFirstUpdate = true;
+            // StateChangedイベント呼び出し
+            StateChanged?.Invoke(this, _state);
+        }
+
+        public void MarkFirstUpdateComplete()
+        {
+            _isFirstUpdate = false;
+        }
+
+        public void ResetFirstUpdate()
+        {
+            _isFirstUpdate = true;
+        }
     }
-} 
+}

@@ -22,7 +22,6 @@ namespace MyEngine.Tests.Core
 
         public override void OnDraw()
         {
-            // タイトル画面の描画をシミュレート
             Engine.Graphics.DrawTexture("title_bg", 0, 0);
             Engine.Graphics.DrawTexture("press_space", 320, 240);
         }
@@ -47,4 +46,4 @@ namespace MyEngine.Tests.Core
             Engine.AudioPlayer.StopBgm();
         }
     }
-} 
+}

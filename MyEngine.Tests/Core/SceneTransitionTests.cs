@@ -16,7 +16,7 @@ namespace MyEngine.Tests.Core
 
         public SceneTransitionTests()
         {
-            _loggerFactory = LoggerFactory.Create(builder => 
+            _loggerFactory = LoggerFactory.Create(builder =>
             {
                 builder.SetMinimumLevel(LogLevel.Debug);
                 builder.AddConsole();
@@ -58,4 +58,4 @@ namespace MyEngine.Tests.Core
             Assert.Contains(_audio.AudioCalls, call => call.StartsWith("PlayBgm(office_bgm"));
         }
     }
-} 
+}

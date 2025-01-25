@@ -26,21 +26,20 @@ namespace MyEngine.Tests.Coroutine
         private IEnumerator<IYieldInstruction> NestedCoroutine()
         {
             yield return new WaitForSeconds(1f);
-            
-            // 子コルーチンを開始し、完了を待機
+
             var child = _manager.Start(SimpleCoroutine());
             while (child.State != CoroutineState.Completed)
             {
                 yield return null;
             }
-            
+
             yield return new WaitForSeconds(1f);
         }
 
         [Fact]
         public void WaitForSeconds_ShouldWaitAndComplete()
         {
-            var completed = false;
+            bool completed = false;
             IEnumerator<IYieldInstruction> routine = new List<IYieldInstruction>
             {
                 new WaitForSeconds(1f)
@@ -58,7 +57,7 @@ namespace MyEngine.Tests.Coroutine
         [Fact]
         public void WaitUntil_ShouldWaitForCondition()
         {
-            var flag = false;
+            bool flag = false;
             IEnumerator<IYieldInstruction> routine = new List<IYieldInstruction>
             {
                 new WaitUntil(() => flag)
@@ -164,11 +163,9 @@ namespace MyEngine.Tests.Coroutine
             var executionCount = 0;
             IEnumerator<IYieldInstruction> ParentRoutine()
             {
-                // 両方の子コルーチンを同時に開始
                 var child1 = _manager.Start(SimpleCoroutine());
                 var child2 = _manager.Start(SimpleCoroutine());
 
-                // 子コルーチンが完了するまで待機
                 while (_manager.ActiveCoroutineCount > 1)
                 {
                     yield return null;
@@ -201,4 +198,4 @@ namespace MyEngine.Tests.Coroutine
             Assert.Equal(1, _manager.ActiveCoroutineCount);
         }
     }
-} 
+}

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using MyEngine.Resource;
@@ -41,24 +42,20 @@ namespace MyEngine.Tests.Mocks
     public class MockTexture
     {
         public string Path { get; }
-
         public MockTexture(string path)
         {
             Path = path;
         }
-
         public override string ToString() => $"MockTexture({Path})";
     }
 
     public class MockSound
     {
         public string Path { get; }
-
         public MockSound(string path)
         {
             Path = path;
         }
-
         public override string ToString() => $"MockSound({Path})";
     }
-} 
+}

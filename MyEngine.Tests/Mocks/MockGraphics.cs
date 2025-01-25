@@ -38,4 +38,4 @@ namespace MyEngine.Tests.Mocks
             DrawCalls.Clear();
         }
     }
-} 
+}

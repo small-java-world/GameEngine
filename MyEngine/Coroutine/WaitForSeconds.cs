@@ -1,40 +1,41 @@
 using System;
 
-namespace MyEngine.Coroutine;
-
-public class WaitForSeconds : IYieldInstruction, IDisposable
+namespace MyEngine.Coroutine
 {
-    private readonly float _duration;
-    private float _elapsedTime;
-    private bool _isDisposed;
-
-    public WaitForSeconds(float duration)
+    public class WaitForSeconds : IYieldInstruction, IDisposable
     {
-        if (duration < 0)
-        {
-            throw new ArgumentException("Duration cannot be negative.", nameof(duration));
-        }
-        _duration = duration;
-        _elapsedTime = 0f;
-        _isDisposed = false;
-    }
+        private readonly float _duration;
+        private float _elapsedTime;
+        private bool _isDisposed;
 
-    public bool Update(float deltaTime)
-    {
-        if (_isDisposed)
+        public WaitForSeconds(float duration)
         {
-            throw new ObjectDisposedException(nameof(WaitForSeconds));
+            if (duration < 0)
+            {
+                throw new ArgumentException("Duration cannot be negative.", nameof(duration));
+            }
+            _duration = duration;
+            _elapsedTime = 0f;
+            _isDisposed = false;
         }
 
-        _elapsedTime += deltaTime;
-        return _elapsedTime >= _duration;
-    }
-
-    public void Dispose()
-    {
-        if (!_isDisposed)
+        public bool Update(float deltaTime)
         {
-            _isDisposed = true;
+            if (_isDisposed)
+            {
+                throw new ObjectDisposedException(nameof(WaitForSeconds));
+            }
+
+            _elapsedTime += deltaTime;
+            return _elapsedTime >= _duration;
+        }
+
+        public void Dispose()
+        {
+            if (!_isDisposed)
+            {
+                _isDisposed = true;
+            }
         }
     }
-} 
+}

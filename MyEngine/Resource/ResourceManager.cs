@@ -67,14 +67,14 @@ namespace MyEngine.Resource
 
         protected virtual T LoadTextureFromFile<T>(string path) where T : class
         {
-            // 実装クラスでオーバーライドして実際のファイル読み込みを行う
+            // 実際の読み込み処理は継承先で
             throw new NotImplementedException();
         }
 
         protected virtual T LoadSoundFromFile<T>(string path) where T : class
         {
-            // 実装クラスでオーバーライドして実際のファイル読み込みを行う
+            // 実際の読み込み処理は継承先で
             throw new NotImplementedException();
         }
     }
-} 
+}

@@ -30,4 +30,4 @@ namespace MyEngine.Tests.Mocks
 
         public int FrameCount => _frameCount;
     }
-} 
+}
