@@ -71,7 +71,7 @@ MyGameEngine/
 
 ゲームエンジンで**プラットフォーム依存**になる主な部分は、  
 - キーボード/マウス/ゲームパッドなど**入力**  
-- **描画**API(DirectX/OpenGL/SDL2など)  
+- **描画**API(OpenGL)  
 - **オーディオ**の再生  
 - ウィンドウ管理(WinAPI / SDL2 / GLFW など)  
 
@@ -545,7 +545,7 @@ public void SomeTest_WithLogging()
 # 5. 実機実装(プラットフォーム層)をあとで追加
 
 **上記ステップが完了すれば、コアロジックはすべて自動テストで検証可能**な状態になっています。  
-最後に、WindowsやLinuxで**実際のウィンドウ表示やDirectX/OpenGLなどに対応するクラス**を実装し、**同じIInputProvider/IGraphics/IAudioPlayerを継承**して差し替えるだけで、動くゲームを作れます。
+最後に、WindowsやLinuxで**実際のウィンドウ表示やOpenGLに対応するクラス**を実装し、**同じIInputProvider/IGraphics/IAudioPlayerを継承**して差し替えるだけで、動くゲームを作れます。
 
 - 例: `DxInputProvider`, `DxGraphics`, `DxAudioPlayer`  
 - あるいは `SdlInputProvider`, `SdlGraphics`, `SdlAudioPlayer`  

@@ -2,6 +2,7 @@ using System.Collections;
 using Microsoft.Extensions.Logging;
 using Xunit;
 using MyEngine.Coroutine;
+using System.Collections.Generic;
 
 namespace MyEngine.Tests.Coroutine
 {
@@ -230,6 +231,97 @@ namespace MyEngine.Tests.Coroutine
             Assert.Equal(2, sequence);
             _coroutineManager.Update(0.1f);  // Complete outer
             Assert.Equal(3, sequence);
+        }
+
+        [Fact]
+        public void MultipleChildCoroutines_ShouldExecuteInParallel()
+        {
+            var sequence = new List<int>();
+            
+            IEnumerator Child1()
+            {
+                yield return new WaitForSeconds(0.5f);
+                sequence.Add(2);
+            }
+
+            IEnumerator Child2()
+            {
+                yield return new WaitForSeconds(0.3f);
+                sequence.Add(1);
+            }
+
+            IEnumerator ParentRoutine()
+            {
+                sequence.Add(0);
+                yield return Child1();
+                yield return Child2();
+                sequence.Add(3);
+            }
+
+            _coroutineManager.Start(ParentRoutine());
+            Assert.Single(sequence);
+            Assert.Equal(0, sequence[0]);
+
+            _coroutineManager.Update(0.3f);  // Child2 completes
+            Assert.Equal(2, sequence.Count);
+            Assert.Equal(1, sequence[1]);
+
+            _coroutineManager.Update(0.2f);  // Child1 completes
+            Assert.Equal(3, sequence.Count);
+            Assert.Equal(2, sequence[2]);
+
+            _coroutineManager.Update(0.1f);  // Parent completes
+            Assert.Equal(4, sequence.Count);
+            Assert.Equal(3, sequence[3]);
+        }
+
+        [Fact]
+        public void MultipleChildCoroutines_WhenParentPaused_ShouldPauseAllChildren()
+        {
+            var sequence = new List<int>();
+            
+            IEnumerator Child1()
+            {
+                yield return new WaitForSeconds(0.5f);
+                sequence.Add(2);
+            }
+
+            IEnumerator Child2()
+            {
+                yield return new WaitForSeconds(0.3f);
+                sequence.Add(1);
+            }
+
+            IEnumerator ParentRoutine()
+            {
+                sequence.Add(0);
+                yield return Child1();
+                yield return Child2();
+                sequence.Add(3);
+            }
+
+            var routine = ParentRoutine();
+            _coroutineManager.Start(routine);
+            Assert.Single(sequence);
+            Assert.Equal(0, sequence[0]);
+
+            _coroutineManager.Update(0.2f);
+            _coroutineManager.Pause(routine);
+            _coroutineManager.Update(0.3f);  // Would complete Child2 if not paused
+            Assert.Single(sequence);
+
+            _coroutineManager.Resume(routine);
+            _coroutineManager.Update(0.1f);  // Complete Child2
+            Assert.Equal(2, sequence.Count);
+            Assert.Equal(1, sequence[1]);
+
+            _coroutineManager.Update(0.2f);  // Complete Child1
+            Assert.Equal(3, sequence.Count);
+            Assert.Equal(2, sequence[2]);
+
+            _coroutineManager.Update(0.1f);  // Complete Parent
+            Assert.Equal(4, sequence.Count);
+            Assert.Equal(3, sequence[3]);
         }
     }
 } 
