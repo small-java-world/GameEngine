@@ -6,10 +6,11 @@ namespace MyEngine.Coroutine
 {
     public enum CoroutineState
     {
-        初期化中,
-        実行中,
-        待機中,
-        完了
+        Initializing,
+        Running,
+        Waiting,
+        Paused,
+        Completed
     }
 
     public class CoroutineInfo
@@ -19,12 +20,14 @@ namespace MyEngine.Coroutine
         public CoroutineInfo? Parent { get; set; }
         public CoroutineInfo? Child { get; set; }
         public bool NeedsAdvance { get; set; }
+        public CoroutineState PreviousState { get; set; }
 
         public CoroutineInfo(IEnumerator routine)
         {
             Routine = routine;
-            State = CoroutineState.初期化中;
+            State = CoroutineState.Initializing;
             NeedsAdvance = false;
+            PreviousState = CoroutineState.Initializing;
         }
     }
 
@@ -52,35 +55,35 @@ namespace MyEngine.Coroutine
 
         public void Start(IEnumerator routine)
         {
-            _logger.LogDebug("コルーチン開始");
+            _logger.LogDebug("Starting coroutine");
             var info = new CoroutineInfo(routine);
             _coroutines.Add(info);
             
-            // 初期化
-            info.State = CoroutineState.初期化中;
+            // Initialize
+            info.State = CoroutineState.Initializing;
             OnCoroutineStateChanged(info);
             
-            // 最初のMoveNextを呼び出し
-            info.State = CoroutineState.実行中;
+            // Call first MoveNext
+            info.State = CoroutineState.Running;
             OnCoroutineStateChanged(info);
             info.Routine.MoveNext();
 
-            // ネストされたコルーチンの処理
+            // Handle nested coroutine
             if (info.Routine.Current is IEnumerator nestedRoutine)
             {
                 var childInfo = new CoroutineInfo(nestedRoutine)
                 {
                     Parent = info,
-                    State = CoroutineState.初期化中
+                    State = CoroutineState.Initializing
                 };
                 info.Child = childInfo;
                 OnCoroutineStateChanged(childInfo);
                 
-                childInfo.State = CoroutineState.実行中;
+                childInfo.State = CoroutineState.Running;
                 OnCoroutineStateChanged(childInfo);
                 nestedRoutine.MoveNext();
                 
-                info.State = CoroutineState.待機中;
+                info.State = CoroutineState.Waiting;
                 OnCoroutineStateChanged(info);
             }
         }
@@ -101,7 +104,7 @@ namespace MyEngine.Coroutine
 
         public void Update(float deltaTime)
         {
-            // 停止したコルーチンの削除
+            // Remove stopped coroutines
             foreach (var routine in _coroutinesToRemove)
             {
                 var info = _coroutines.Find(x => x.Routine == routine);
@@ -111,18 +114,18 @@ namespace MyEngine.Coroutine
                     {
                         _coroutinesToRemove.Add(info.Child.Routine);
                     }
-                    info.State = CoroutineState.完了;
+                    info.State = CoroutineState.Completed;
                     OnCoroutineStateChanged(info);
                     _coroutines.Remove(info);
                 }
             }
             _coroutinesToRemove.Clear();
 
-            // アクティブなコルーチンの更新
+            // Active coroutine update
             var completedRoutines = new List<CoroutineInfo>();
             var routinesToUpdate = _coroutines.ToList();
 
-            // 親コルーチンを先に処理
+            // Process parent coroutine first
             foreach (var info in routinesToUpdate.Where(x => x.Parent == null))
             {
                 if (!ProcessCoroutine(info, deltaTime))
@@ -131,12 +134,53 @@ namespace MyEngine.Coroutine
                 }
             }
 
-            // 完了したコルーチンの削除
+            // Remove completed coroutines
             foreach (var completed in completedRoutines)
             {
-                completed.State = CoroutineState.完了;
+                completed.State = CoroutineState.Completed;
                 OnCoroutineStateChanged(completed);
                 _coroutines.Remove(completed);
+            }
+        }
+
+        public void Pause(IEnumerator routine)
+        {
+            _logger.LogDebug("Pausing coroutine");
+            var info = _coroutines.Find(x => x.Routine == routine);
+            if (info != null && info.State != CoroutineState.Paused)
+            {
+                info.PreviousState = info.State;
+                info.State = CoroutineState.Paused;
+                OnCoroutineStateChanged(info);
+
+                // Pause child coroutine as well
+                if (info.Child != null)
+                {
+                    Pause(info.Child.Routine);
+                }
+            }
+        }
+
+        public void Resume(IEnumerator routine)
+        {
+            _logger.LogDebug("Resuming coroutine");
+            var info = _coroutines.Find(x => x.Routine == routine);
+            if (info != null && info.State == CoroutineState.Paused)
+            {
+                info.State = info.PreviousState;
+                OnCoroutineStateChanged(info);
+
+                // If was waiting, mark for advance
+                if (info.State == CoroutineState.Waiting)
+                {
+                    info.NeedsAdvance = true;
+                }
+
+                // Resume child coroutine as well
+                if (info.Child != null)
+                {
+                    Resume(info.Child.Routine);
+                }
             }
         }
 
@@ -144,25 +188,31 @@ namespace MyEngine.Coroutine
         {
             try
             {
-                // 子コルーチンの処理を優先
+                // Skip if paused
+                if (info.State == CoroutineState.Paused)
+                {
+                    return true;
+                }
+
+                // Process child coroutine first
                 if (info.Child != null)
                 {
                     if (!ProcessCoroutine(info.Child, deltaTime))
                     {
-                        // 子コルーチンが完了したら、親コルーチンを待機状態に
+                        // When child completes, set parent to waiting
                         info.Child = null;
-                        info.State = CoroutineState.待機中;
+                        info.State = CoroutineState.Waiting;
                         OnCoroutineStateChanged(info);
-                        info.NeedsAdvance = true;  // 次のフレームで進行するようマーク
+                        info.NeedsAdvance = true;
                         return true;
                     }
                     return true;
                 }
 
-                // 待機状態かつ進行が必要な場合
-                if (info.State == CoroutineState.待機中 && info.NeedsAdvance)
+                // If waiting and needs advance
+                if (info.State == CoroutineState.Waiting && info.NeedsAdvance)
                 {
-                    info.State = CoroutineState.実行中;
+                    info.State = CoroutineState.Running;
                     OnCoroutineStateChanged(info);
                     info.NeedsAdvance = false;
                     return info.Routine.MoveNext();
@@ -170,55 +220,35 @@ namespace MyEngine.Coroutine
 
                 var current = info.Routine.Current;
 
-                // ネストされたコルーチンの処理
-                if (current is IEnumerator nestedRoutine)
-                {
-                    var childInfo = new CoroutineInfo(nestedRoutine)
-                    {
-                        Parent = info,
-                        State = CoroutineState.初期化中
-                    };
-                    info.Child = childInfo;
-                    OnCoroutineStateChanged(childInfo);
-                    
-                    childInfo.State = CoroutineState.実行中;
-                    OnCoroutineStateChanged(childInfo);
-                    nestedRoutine.MoveNext();
-                    
-                    info.State = CoroutineState.待機中;
-                    OnCoroutineStateChanged(info);
-                    return true;
-                }
-
-                // 待機命令の処理
+                // Handle yield instruction
                 if (current is IYieldInstruction yieldInstruction)
                 {
-                    if (info.State != CoroutineState.待機中)
+                    if (info.State != CoroutineState.Waiting)
                     {
-                        info.State = CoroutineState.待機中;
+                        info.State = CoroutineState.Waiting;
                         OnCoroutineStateChanged(info);
                     }
 
                     if (yieldInstruction.Update(deltaTime))
                     {
-                        info.State = CoroutineState.実行中;
+                        info.State = CoroutineState.Running;
                         OnCoroutineStateChanged(info);
                         return info.Routine.MoveNext();
                     }
                     return true;
                 }
 
-                // その他の場合は次のステップへ
-                if (info.State != CoroutineState.実行中)
+                // Otherwise proceed to next step
+                if (info.State != CoroutineState.Running)
                 {
-                    info.State = CoroutineState.実行中;
+                    info.State = CoroutineState.Running;
                     OnCoroutineStateChanged(info);
                 }
                 return info.Routine.MoveNext();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "コルーチン実行エラー");
+                _logger.LogError(ex, "Error executing coroutine");
                 return false;
             }
         }

@@ -164,5 +164,72 @@ namespace MyEngine.Tests.Coroutine
             Assert.Equal(3, sequence);
             Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
         }
+
+        [Fact]
+        public void PauseAndResume_ShouldWorkCorrectly()
+        {
+            int sequence = 0;
+            IEnumerator TestRoutine()
+            {
+                sequence++;  // 1
+                yield return new WaitForSeconds(0.3f);
+                sequence++;  // 2 (after pause/resume)
+            }
+
+            var routine = TestRoutine();
+            _coroutineManager.Start(routine);
+            Assert.Equal(1, sequence);
+
+            // First update
+            _coroutineManager.Update(0.1f);
+            Assert.Equal(1, sequence);
+
+            // Pause the coroutine
+            _coroutineManager.Pause(routine);
+            _coroutineManager.Update(0.3f);  // This would complete if not paused
+            Assert.Equal(1, sequence);  // Should still be 1 while paused
+
+            // Resume and complete
+            _coroutineManager.Resume(routine);
+            _coroutineManager.Update(0.2f);  // Complete the remaining time
+            Assert.Equal(2, sequence);
+        }
+
+        [Fact]
+        public void PauseAndResume_WithNestedCoroutines_ShouldWorkCorrectly()
+        {
+            int sequence = 0;
+            IEnumerator InnerRoutine()
+            {
+                yield return new WaitForSeconds(0.5f);
+                sequence++;  // 2
+            }
+
+            IEnumerator OuterRoutine()
+            {
+                sequence++;  // 1
+                yield return InnerRoutine();
+                sequence++;  // 3
+            }
+
+            var routine = OuterRoutine();
+            _coroutineManager.Start(routine);
+            Assert.Equal(1, sequence);
+
+            _coroutineManager.Update(0.3f);
+            Assert.Equal(1, sequence);
+
+            // Pause the outer coroutine (should also pause inner)
+            _coroutineManager.Pause(routine);
+            _coroutineManager.Update(0.3f);  // This would complete inner if not paused
+            Assert.Equal(1, sequence);
+
+            // Resume and complete
+            _coroutineManager.Resume(routine);
+            _coroutineManager.Update(0.2f);  // Complete inner
+            Assert.Equal(2, sequence);
+            _coroutineManager.Update(0.1f);  // Complete outer
+            Assert.Equal(3, sequence);
+        }
     }
 } 
