@@ -60,84 +60,74 @@ public class CoroutineManager
     {
         _isProcessing = true;
 
-        // 新しいコルーチンを追加
-        if (_coroutinesToAdd.Count > 0)
+        try
         {
-            foreach (var coroutine in _coroutinesToAdd.ToList())
+            // 新しいコルーチンを追加して初期化
+            if (_coroutinesToAdd.Count > 0)
             {
-                _coroutines.Add(coroutine);
-                
-                // コルーチンの初期実行
-                if (coroutine.Routine.MoveNext())
+                foreach (var coroutine in _coroutinesToAdd.ToList())
                 {
-                    var current = coroutine.Routine.Current;
-                    if (current is IEnumerator<IYieldInstruction> childRoutine)
+                    _coroutines.Add(coroutine);
+                    
+                    // コルーチンの初期実行
+                    if (coroutine.Routine.MoveNext())
                     {
-                        var child = new CoroutineInfo(childRoutine, _logger);
-                        coroutine.AddChild(child);
-                        _coroutines.Add(child);
-
-                        // 子コルーチンの初期実行
-                        if (childRoutine.MoveNext())
+                        var current = coroutine.Routine.Current;
+                        if (current is IEnumerator<IYieldInstruction> childRoutine)
                         {
-                            var childCurrent = childRoutine.Current;
-                            if (childCurrent != null)
-                            {
-                                child.SetYieldInstruction(childCurrent);
-                            }
+                            // 子コルーチンは次のフレームで開始
+                            var child = new CoroutineInfo(childRoutine, _logger);
+                            _coroutinesToAdd.Add(child);
+                            coroutine.AddChild(child);
+                            coroutine.SetState(CoroutineState.Waiting);
                         }
-                        else
+                        else if (current != null)
                         {
-                            child.SetState(CoroutineState.Completed);
-                            _coroutinesToRemove.Add(child);
+                            coroutine.SetYieldInstruction(current);
                         }
-
-                        coroutine.SetState(CoroutineState.Waiting);
                     }
-                    else if (current != null)
+                    else
                     {
-                        coroutine.SetYieldInstruction(current);
+                        coroutine.SetState(CoroutineState.Completed);
+                        _coroutinesToRemove.Add(coroutine);
                     }
                 }
-                else
+                _coroutinesToAdd.Clear();
+            }
+
+            // コルーチンを更新
+            var coroutinesToProcess = _coroutines.ToList();
+            foreach (var coroutine in coroutinesToProcess)
+            {
+                if (coroutine.State != CoroutineState.Paused)
                 {
-                    coroutine.SetState(CoroutineState.Completed);
-                    _coroutinesToRemove.Add(coroutine);
+                    ProcessCoroutine(coroutine, deltaTime);
                 }
             }
-            _coroutinesToAdd.Clear();
-        }
 
-        // コルーチンを更新
-        var coroutinesToProcess = _coroutines.ToList();
-        foreach (var coroutine in coroutinesToProcess)
-        {
-            if (coroutine.State != CoroutineState.Paused)
+            // 完了したコルーチンを削除
+            if (_coroutinesToRemove.Count > 0)
             {
-                ProcessCoroutine(coroutine, deltaTime);
+                foreach (var coroutine in _coroutinesToRemove.ToList())
+                {
+                    _coroutines.Remove(coroutine);
+                }
+                _coroutinesToRemove.Clear();
+            }
+
+            // 子コルーチンの状態を更新
+            foreach (var coroutine in _coroutines.ToList())
+            {
+                if (coroutine.State == CoroutineState.Waiting && !coroutine.Children.Any())
+                {
+                    coroutine.SetState(CoroutineState.Running);
+                }
             }
         }
-
-        // 完了したコルーチンを削除
-        if (_coroutinesToRemove.Count > 0)
+        finally
         {
-            foreach (var coroutine in _coroutinesToRemove.ToList())
-            {
-                _coroutines.Remove(coroutine);
-            }
-            _coroutinesToRemove.Clear();
+            _isProcessing = false;
         }
-
-        // 子コルーチンの状態を更新
-        foreach (var coroutine in _coroutines.ToList())
-        {
-            if (coroutine.State == CoroutineState.Waiting && !coroutine.Children.Any())
-            {
-                coroutine.SetState(CoroutineState.Running);
-            }
-        }
-
-        _isProcessing = false;
     }
 
     private bool ProcessCoroutine(CoroutineInfo coroutine, float deltaTime)
@@ -153,15 +143,20 @@ public class CoroutineManager
         }
 
         // 子コルーチンの処理
-        var hasRunningChildren = false;
-        foreach (var child in coroutine.Children.ToList())
+        if (coroutine.Children.Any())
         {
-            if (child.State != CoroutineState.Completed)
+            var allChildrenCompleted = true;
+            var anyChildProcessed = false;
+
+            foreach (var child in coroutine.Children.ToList())
             {
-                var childCompleted = ProcessCoroutine(child, deltaTime);
-                if (!childCompleted)
+                if (child.State != CoroutineState.Completed)
                 {
-                    hasRunningChildren = true;
+                    allChildrenCompleted = false;
+                    if (ProcessCoroutine(child, deltaTime))
+                    {
+                        anyChildProcessed = true;
+                    }
                 }
                 else
                 {
@@ -169,104 +164,48 @@ public class CoroutineManager
                     _coroutinesToRemove.Add(child);
                 }
             }
-        }
 
-        // 子コルーチンが実行中の場合は待機
-        if (hasRunningChildren)
-        {
-            coroutine.SetState(CoroutineState.Waiting);
-            return false;
+            if (!allChildrenCompleted)
+            {
+                if (anyChildProcessed)
+                {
+                    coroutine.SetState(CoroutineState.Waiting);
+                }
+                return false;
+            }
         }
 
         // 現在のyield instructionの処理
         if (coroutine.CurrentYieldInstruction != null)
         {
-            try
+            if (!coroutine.CurrentYieldInstruction.Update(deltaTime))
             {
-                if (!coroutine.CurrentYieldInstruction.Update(deltaTime))
-                {
-                    return false;
-                }
-                coroutine.SetYieldInstruction(null);
+                return false;
             }
-            catch (ObjectDisposedException)
-            {
-                // 既に破棄されたオブジェクトの場合は次に進む
-                coroutine.SetYieldInstruction(null);
-            }
+            coroutine.SetYieldInstruction(null);
         }
 
-        // コルーチンの実行
-        if (coroutine.State == CoroutineState.Running || coroutine.State == CoroutineState.Waiting)
+        // コルーチンの次のステップを実行
+        if (!coroutine.Routine.MoveNext())
         {
-            try
-            {
-                if (!coroutine.IsFirstUpdate)
-                {
-                    if (!coroutine.Routine.MoveNext())
-                    {
-                        coroutine.SetState(CoroutineState.Completed);
-                        _coroutinesToRemove.Add(coroutine);
-                        return true;
-                    }
-                }
+            coroutine.SetState(CoroutineState.Completed);
+            _coroutinesToRemove.Add(coroutine);
+            return true;
+        }
 
-                coroutine.MarkFirstUpdateComplete();
-
-                var current = coroutine.Routine.Current;
-                if (current is IEnumerator<IYieldInstruction> childRoutine)
-                {
-                    var child = new CoroutineInfo(childRoutine, _logger);
-                    coroutine.AddChild(child);
-                    _coroutines.Add(child);
-
-                    if (coroutine.State == CoroutineState.Paused)
-                    {
-                        child.SetState(CoroutineState.Paused);
-                    }
-                    else
-                    {
-                        // 子コルーチンの初期実行
-                        if (childRoutine.MoveNext())
-                        {
-                            var childCurrent = childRoutine.Current;
-                            if (childCurrent != null)
-                            {
-                                child.SetYieldInstruction(childCurrent);
-                            }
-                        }
-                        else
-                        {
-                            child.SetState(CoroutineState.Completed);
-                            _coroutinesToRemove.Add(child);
-                            return true; // 子コルーチンが即座に完了した場合は親も進める
-                        }
-                    }
-
-                    coroutine.SetState(CoroutineState.Waiting);
-                    return false;
-                }
-                else if (current != null)
-                {
-                    coroutine.SetYieldInstruction(current);
-                    return false;
-                }
-
-                // 次のステップへ進む
-                if (!coroutine.Routine.MoveNext())
-                {
-                    coroutine.SetState(CoroutineState.Completed);
-                    _coroutinesToRemove.Add(coroutine);
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"コルーチン実行エラー: {ex.Message}");
-                coroutine.SetState(CoroutineState.Completed);
-                _coroutinesToRemove.Add(coroutine);
-                return true;
-            }
+        var current = coroutine.Routine.Current;
+        if (current is IEnumerator<IYieldInstruction> childRoutine)
+        {
+            var child = new CoroutineInfo(childRoutine, _logger);
+            coroutine.AddChild(child);
+            _coroutinesToAdd.Add(child);
+            coroutine.SetState(CoroutineState.Waiting);
+            return false;
+        }
+        else if (current is IYieldInstruction yieldInstr)
+        {
+            coroutine.SetYieldInstruction(yieldInstr);
+            return false;
         }
 
         return false;
@@ -298,6 +237,10 @@ public class CoroutineManager
         if (coroutine.State == CoroutineState.Running || coroutine.State == CoroutineState.Waiting)
         {
             coroutine.SetState(CoroutineState.Paused);
+            foreach (var child in coroutine.Children.ToList())
+            {
+                PauseCoroutine(child);
+            }
         }
     }
 
@@ -306,7 +249,18 @@ public class CoroutineManager
         if (coroutine == null) throw new ArgumentNullException(nameof(coroutine));
         if (coroutine.State == CoroutineState.Paused)
         {
-            coroutine.SetState(CoroutineState.Running);
+            if (coroutine.Children.Any())
+            {
+                coroutine.SetState(CoroutineState.Waiting);
+                foreach (var child in coroutine.Children.ToList())
+                {
+                    ResumeCoroutine(child);
+                }
+            }
+            else
+            {
+                coroutine.SetState(CoroutineState.Running);
+            }
         }
     }
 } 
