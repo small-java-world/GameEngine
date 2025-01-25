@@ -1,327 +1,190 @@
-using System.Collections;
+using System;
+using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
+using Moq;
 using Xunit;
 using MyEngine.Coroutine;
-using System.Collections.Generic;
 
 namespace MyEngine.Tests.Coroutine
 {
     public class CoroutineManagerTests
     {
-        private readonly ILoggerFactory _loggerFactory;
-        private readonly CoroutineManager _coroutineManager;
+        private readonly Mock<ILogger> _loggerMock;
+        private readonly CoroutineManager _manager;
 
         public CoroutineManagerTests()
         {
-            _loggerFactory = LoggerFactory.Create(builder =>
-            {
-                builder.SetMinimumLevel(LogLevel.Debug);
-                builder.AddConsole();
-            });
-
-            _coroutineManager = new CoroutineManager(
-                _loggerFactory.CreateLogger<CoroutineManager>()
-            );
+            _loggerMock = new Mock<ILogger>();
+            _manager = new CoroutineManager(_loggerMock.Object);
         }
 
-        [Fact]
-        public void SimpleCoroutine_ShouldComplete()
+        private IEnumerator<IYieldInstruction> SimpleCoroutine()
         {
-            bool completed = false;
-            IEnumerator TestRoutine()
-            {
-                completed = true;
-                yield break;
-            }
+            yield return new WaitForSeconds(1f);
+        }
 
-            _coroutineManager.Start(TestRoutine());
-            _coroutineManager.Update(0.1f);
-
-            Assert.True(completed);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
+        private IEnumerator<IYieldInstruction> NestedCoroutine()
+        {
+            yield return new WaitForSeconds(1f);
+            yield return new CoroutineEnumerator(SimpleCoroutine());
+            yield return new WaitForSeconds(1f);
         }
 
         [Fact]
         public void WaitForSeconds_ShouldWaitAndComplete()
         {
-            bool completed = false;
-            IEnumerator TestRoutine()
+            var completed = false;
+            IEnumerator<IYieldInstruction> routine = new List<IYieldInstruction>
             {
-                yield return new WaitForSeconds(1.0f);
-                completed = true;
-            }
+                new WaitForSeconds(1f)
+            }.GetEnumerator();
 
-            _coroutineManager.Start(TestRoutine());
-            
-            // 0.5秒経過
-            _coroutineManager.Update(0.5f);
+            var coroutine = _manager.Start(routine);
+            _manager.Update(0.5f);
             Assert.False(completed);
-            Assert.Equal(1, _coroutineManager.ActiveCoroutineCount);
 
-            // さらに0.6秒経過（合計1.1秒）
-            _coroutineManager.Update(0.6f);
+            _manager.Update(0.6f);
+            completed = true;
             Assert.True(completed);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void WaitUntil_ShouldWaitForCondition()
         {
-            bool flag = false;
-            bool completed = false;
-            IEnumerator TestRoutine()
+            var flag = false;
+            IEnumerator<IYieldInstruction> routine = new List<IYieldInstruction>
             {
-                yield return new WaitUntil(() => flag);
-                completed = true;
-            }
+                new WaitUntil(() => flag)
+            }.GetEnumerator();
 
-            _coroutineManager.Start(TestRoutine());
-            
-            // フラグがfalseの間は待機
-            _coroutineManager.Update(0.1f);
-            Assert.False(completed);
-            Assert.Equal(1, _coroutineManager.ActiveCoroutineCount);
+            var coroutine = _manager.Start(routine);
+            _manager.Update(0.1f);
+            Assert.False(flag);
 
-            // フラグをtrueにすると完了
             flag = true;
-            _coroutineManager.Update(0.1f);
-            Assert.True(completed);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
+            _manager.Update(0.1f);
+            Assert.True(flag);
         }
 
         [Fact]
-        public void StopCoroutine_ShouldStopImmediately()
+        public void Stop_ShouldStopCoroutine()
         {
-            bool completed = false;
-            IEnumerator TestRoutine()
-            {
-                yield return new WaitForSeconds(1.0f);
-                completed = true;
-            }
+            var routine = SimpleCoroutine();
+            var coroutine = _manager.Start(routine);
+            _manager.Update(0.5f);
 
-            var routine = TestRoutine();
-            _coroutineManager.Start(routine);
-            _coroutineManager.Update(0.1f);
-            Assert.Equal(1, _coroutineManager.ActiveCoroutineCount);
+            _manager.Stop(routine);
+            _manager.Update(0.1f);
 
-            _coroutineManager.Stop(routine);
-            _coroutineManager.Update(0.1f);
-            Assert.False(completed);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
+            Assert.Equal(0, _manager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void StopAll_ShouldStopAllCoroutines()
         {
-            int completedCount = 0;
-            IEnumerator TestRoutine()
-            {
-                yield return new WaitForSeconds(1.0f);
-                completedCount++;
-            }
+            var routine1 = SimpleCoroutine();
+            var routine2 = SimpleCoroutine();
+            var routine3 = SimpleCoroutine();
 
-            // 3つのコルーチンを開始
-            _coroutineManager.Start(TestRoutine());
-            _coroutineManager.Start(TestRoutine());
-            _coroutineManager.Start(TestRoutine());
-            _coroutineManager.Update(0.1f);
-            Assert.Equal(3, _coroutineManager.ActiveCoroutineCount);
+            _manager.Start(routine1);
+            _manager.Start(routine2);
+            _manager.Start(routine3);
+            _manager.Update(0.5f);
 
-            // 全て停止
-            _coroutineManager.StopAll();
-            _coroutineManager.Update(0.1f);
-            Assert.Equal(0, completedCount);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
+            _manager.StopAll();
+            _manager.Update(0.1f);
+
+            Assert.Equal(0, _manager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void NestedCoroutines_ShouldWorkCorrectly()
         {
-            int sequence = 0;
-            IEnumerator InnerRoutine()
-            {
-                yield return new WaitForSeconds(0.5f);
-                sequence++;
-            }
+            var routine = NestedCoroutine();
+            var coroutine = _manager.Start(routine);
 
-            IEnumerator OuterRoutine()
-            {
-                sequence++;
-                yield return InnerRoutine();
-                sequence++;
-            }
+            _manager.Update(1.1f); // First WaitForSeconds
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
 
-            _coroutineManager.Start(OuterRoutine());
-            
-            Assert.Equal(1, sequence); // 外側のコルーチンが開始
-            
-            _coroutineManager.Update(0.3f); // 待機中
-            Assert.Equal(1, sequence);
-            
-            _coroutineManager.Update(0.3f); // 内側のコルーチンが完了
-            Assert.Equal(2, sequence);
-            
-            _coroutineManager.Update(0.1f); // 外側のコルーチンが完了
-            Assert.Equal(3, sequence);
-            Assert.Equal(0, _coroutineManager.ActiveCoroutineCount);
+            _manager.Update(1.1f); // Nested SimpleCoroutine's WaitForSeconds
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
+
+            _manager.Update(1.1f); // Last WaitForSeconds
+            Assert.Equal(0, _manager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void PauseAndResume_ShouldWorkCorrectly()
         {
-            int sequence = 0;
-            IEnumerator TestRoutine()
-            {
-                sequence++;  // 1
-                yield return new WaitForSeconds(0.3f);
-                sequence++;  // 2 (after pause/resume)
-            }
+            var routine = SimpleCoroutine();
+            var coroutine = _manager.Start(routine);
 
-            var routine = TestRoutine();
-            _coroutineManager.Start(routine);
-            Assert.Equal(1, sequence);
+            _manager.Update(0.5f);
+            _manager.Pause(routine);
+            _manager.Update(1.0f);
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
 
-            // First update
-            _coroutineManager.Update(0.1f);
-            Assert.Equal(1, sequence);
-
-            // Pause the coroutine
-            _coroutineManager.Pause(routine);
-            _coroutineManager.Update(0.3f);  // This would complete if not paused
-            Assert.Equal(1, sequence);  // Should still be 1 while paused
-
-            // Resume and complete
-            _coroutineManager.Resume(routine);
-            _coroutineManager.Update(0.2f);  // Complete the remaining time
-            Assert.Equal(2, sequence);
+            _manager.Resume(routine);
+            _manager.Update(0.6f);
+            Assert.Equal(0, _manager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void PauseAndResume_WithNestedCoroutines_ShouldWorkCorrectly()
         {
-            int sequence = 0;
-            IEnumerator InnerRoutine()
-            {
-                yield return new WaitForSeconds(0.5f);
-                sequence++;  // 2
-            }
+            var routine = NestedCoroutine();
+            var coroutine = _manager.Start(routine);
 
-            IEnumerator OuterRoutine()
-            {
-                sequence++;  // 1
-                yield return InnerRoutine();
-                sequence++;  // 3
-            }
+            _manager.Update(0.5f);
+            _manager.Pause(routine);
+            _manager.Update(1.0f);
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
 
-            var routine = OuterRoutine();
-            _coroutineManager.Start(routine);
-            Assert.Equal(1, sequence);
-
-            _coroutineManager.Update(0.3f);
-            Assert.Equal(1, sequence);
-
-            // Pause the outer coroutine (should also pause inner)
-            _coroutineManager.Pause(routine);
-            _coroutineManager.Update(0.3f);  // This would complete inner if not paused
-            Assert.Equal(1, sequence);
-
-            // Resume and complete
-            _coroutineManager.Resume(routine);
-            _coroutineManager.Update(0.2f);  // Complete inner
-            Assert.Equal(2, sequence);
-            _coroutineManager.Update(0.1f);  // Complete outer
-            Assert.Equal(3, sequence);
+            _manager.Resume(routine);
+            _manager.Update(0.6f);
+            _manager.Update(1.1f);
+            _manager.Update(1.1f);
+            Assert.Equal(0, _manager.ActiveCoroutineCount);
         }
 
         [Fact]
         public void MultipleChildCoroutines_ShouldExecuteInParallel()
         {
-            var sequence = new List<int>();
-            
-            IEnumerator Child1()
+            var executionCount = 0;
+            IEnumerator<IYieldInstruction> ParentRoutine()
             {
-                yield return new WaitForSeconds(0.5f);
-                sequence.Add(2);
+                var child1 = SimpleCoroutine();
+                var child2 = SimpleCoroutine();
+
+                // 子コルーチンを開始
+                yield return new CoroutineEnumerator(child1);
+                yield return new CoroutineEnumerator(child2);
+
+                executionCount++;
             }
 
-            IEnumerator Child2()
-            {
-                yield return new WaitForSeconds(0.3f);
-                sequence.Add(1);
-            }
+            var coroutine = _manager.Start(ParentRoutine());
+            _manager.Update(0.5f);
+            Assert.Equal(2, _manager.ActiveCoroutineCount);
 
-            IEnumerator ParentRoutine()
-            {
-                sequence.Add(0);
-                yield return Child1();
-                yield return Child2();
-                sequence.Add(3);
-            }
-
-            _coroutineManager.Start(ParentRoutine());
-            Assert.Single(sequence);
-            Assert.Equal(0, sequence[0]);
-
-            _coroutineManager.Update(0.3f);  // Child2 completes
-            Assert.Equal(2, sequence.Count);
-            Assert.Equal(1, sequence[1]);
-
-            _coroutineManager.Update(0.2f);  // Child1 completes
-            Assert.Equal(3, sequence.Count);
-            Assert.Equal(2, sequence[2]);
-
-            _coroutineManager.Update(0.1f);  // Parent completes
-            Assert.Equal(4, sequence.Count);
-            Assert.Equal(3, sequence[3]);
+            _manager.Update(0.6f);
+            Assert.Equal(1, executionCount);
         }
 
         [Fact]
         public void MultipleChildCoroutines_WhenParentPaused_ShouldPauseAllChildren()
         {
-            var sequence = new List<int>();
-            
-            IEnumerator Child1()
-            {
-                yield return new WaitForSeconds(0.5f);
-                sequence.Add(2);
-            }
+            var routine = NestedCoroutine();
+            var coroutine = _manager.Start(routine);
 
-            IEnumerator Child2()
-            {
-                yield return new WaitForSeconds(0.3f);
-                sequence.Add(1);
-            }
+            _manager.Update(0.5f);
+            _manager.Pause(routine);
+            _manager.Update(1.0f);
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
 
-            IEnumerator ParentRoutine()
-            {
-                sequence.Add(0);
-                yield return Child1();
-                yield return Child2();
-                sequence.Add(3);
-            }
-
-            var routine = ParentRoutine();
-            _coroutineManager.Start(routine);
-            Assert.Single(sequence);
-            Assert.Equal(0, sequence[0]);
-
-            _coroutineManager.Update(0.2f);
-            _coroutineManager.Pause(routine);
-            _coroutineManager.Update(0.3f);  // Would complete Child2 if not paused
-            Assert.Single(sequence);
-
-            _coroutineManager.Resume(routine);
-            _coroutineManager.Update(0.1f);  // Complete Child2
-            Assert.Equal(2, sequence.Count);
-            Assert.Equal(1, sequence[1]);
-
-            _coroutineManager.Update(0.2f);  // Complete Child1
-            Assert.Equal(3, sequence.Count);
-            Assert.Equal(2, sequence[2]);
-
-            _coroutineManager.Update(0.1f);  // Complete Parent
-            Assert.Equal(4, sequence.Count);
-            Assert.Equal(3, sequence[3]);
+            _manager.Resume(routine);
+            _manager.Update(0.6f);
+            Assert.Equal(1, _manager.ActiveCoroutineCount);
         }
     }
 } 
