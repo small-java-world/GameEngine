@@ -26,7 +26,14 @@ namespace MyEngine.Tests.Coroutine
         private IEnumerator<IYieldInstruction> NestedCoroutine()
         {
             yield return new WaitForSeconds(1f);
-            yield return new CoroutineEnumerator(SimpleCoroutine());
+            
+            // 子コルーチンを開始し、完了を待機
+            var child = _manager.Start(SimpleCoroutine());
+            while (child.State != CoroutineState.Completed)
+            {
+                yield return null;
+            }
+            
             yield return new WaitForSeconds(1f);
         }
 
@@ -104,10 +111,10 @@ namespace MyEngine.Tests.Coroutine
             var coroutine = _manager.Start(routine);
 
             _manager.Update(1.1f); // First WaitForSeconds
-            Assert.Equal(1, _manager.ActiveCoroutineCount);
+            Assert.Equal(2, _manager.ActiveCoroutineCount); // 親 + 子1つ
 
             _manager.Update(1.1f); // Nested SimpleCoroutine's WaitForSeconds
-            Assert.Equal(1, _manager.ActiveCoroutineCount);
+            Assert.Equal(1, _manager.ActiveCoroutineCount); // 親のみ
 
             _manager.Update(1.1f); // Last WaitForSeconds
             Assert.Equal(0, _manager.ActiveCoroutineCount);
@@ -138,13 +145,17 @@ namespace MyEngine.Tests.Coroutine
             _manager.Update(0.5f);
             _manager.Pause(routine);
             _manager.Update(1.0f);
-            Assert.Equal(1, _manager.ActiveCoroutineCount);
+            Assert.Equal(2, _manager.ActiveCoroutineCount); // 親 + 子1つ（両方Paused）
 
             _manager.Resume(routine);
             _manager.Update(0.6f);
+            Assert.Equal(2, _manager.ActiveCoroutineCount); // 親 + 子1つ（Running）
+
             _manager.Update(1.1f);
+            Assert.Equal(1, _manager.ActiveCoroutineCount); // 親のみ（子は完了）
+
             _manager.Update(1.1f);
-            Assert.Equal(0, _manager.ActiveCoroutineCount);
+            Assert.Equal(0, _manager.ActiveCoroutineCount); // すべて完了
         }
 
         [Fact]
@@ -153,19 +164,22 @@ namespace MyEngine.Tests.Coroutine
             var executionCount = 0;
             IEnumerator<IYieldInstruction> ParentRoutine()
             {
-                var child1 = SimpleCoroutine();
-                var child2 = SimpleCoroutine();
+                // 両方の子コルーチンを同時に開始
+                var child1 = _manager.Start(SimpleCoroutine());
+                var child2 = _manager.Start(SimpleCoroutine());
 
-                // 子コルーチンを開始
-                yield return new CoroutineEnumerator(child1);
-                yield return new CoroutineEnumerator(child2);
+                // 子コルーチンが完了するまで待機
+                while (_manager.ActiveCoroutineCount > 1)
+                {
+                    yield return null;
+                }
 
                 executionCount++;
             }
 
             var coroutine = _manager.Start(ParentRoutine());
             _manager.Update(0.5f);
-            Assert.Equal(2, _manager.ActiveCoroutineCount);
+            Assert.Equal(3, _manager.ActiveCoroutineCount); // 親 + 子2つ
 
             _manager.Update(0.6f);
             Assert.Equal(1, executionCount);

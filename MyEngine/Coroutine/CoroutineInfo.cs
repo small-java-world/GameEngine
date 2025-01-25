@@ -77,6 +77,7 @@ public class CoroutineInfo
         _state = newState;
         StateChanged?.Invoke(this, newState);
 
+        // 子コルーチンの状態を更新
         foreach (var child in _children.ToList())
         {
             switch (newState)
@@ -89,6 +90,14 @@ public class CoroutineInfo
                     {
                         child.SetState(CoroutineState.Running);
                     }
+                    else if (child.State == CoroutineState.Waiting)
+                    {
+                        // 親が再開したとき、待機中の子も再開
+                        child.SetState(CoroutineState.Running);
+                    }
+                    break;
+                case CoroutineState.Waiting:
+                    // 子コルーチンの状態は変更しない
                     break;
                 case CoroutineState.Completed:
                     child.SetState(CoroutineState.Completed);
@@ -97,20 +106,57 @@ public class CoroutineInfo
             }
         }
 
-        if (newState == CoroutineState.Completed)
+        // 状態変更時の処理
+        switch (newState)
         {
-            if (_currentYieldInstruction is IDisposable disposable)
-            {
-                try
+            case CoroutineState.Running:
+                if (oldState == CoroutineState.Waiting && _currentYieldInstruction == null)
                 {
-                    disposable.Dispose();
+                    // Waiting状態から復帰時、yield instructionがなければ次のステップへ
+                    _state = CoroutineState.Running;
                 }
-                catch (ObjectDisposedException)
+                break;
+            case CoroutineState.Waiting:
+                // 子コルーチンが存在する場合は、子コルーチンの状態を維持
+                if (_children.Count > 0)
                 {
-                    // 既に破棄されている場合は無視
+                    foreach (var child in _children)
+                    {
+                        if (child.State == CoroutineState.Paused)
+                        {
+                            child.SetState(CoroutineState.Running);
+                        }
+                    }
                 }
-            }
-            _currentYieldInstruction = null;
+                break;
+            case CoroutineState.Completed:
+                // 完了時は子コルーチンも完了
+                foreach (var child in _children.ToList())
+                {
+                    child.SetState(CoroutineState.Completed);
+                    RemoveChild(child);
+                }
+
+                if (_currentYieldInstruction is IDisposable disposable)
+                {
+                    try
+                    {
+                        disposable.Dispose();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // 既に破棄されている場合は無視
+                    }
+                }
+                _currentYieldInstruction = null;
+                break;
+            case CoroutineState.Paused:
+                // 一時停止時は子コルーチンも一時停止
+                foreach (var child in _children)
+                {
+                    child.SetState(CoroutineState.Paused);
+                }
+                break;
         }
     }
 
