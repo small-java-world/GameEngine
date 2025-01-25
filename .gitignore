@@ -1,0 +1,99 @@
+# .NET Core/.NET Standard の一般的な無視ファイル
+*.swp
+*.user
+*.userosscache
+*.sln.docstates
+
+# ビルド結果
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]uild/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# Visual Studio
+.vs/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln.iml
+*.userprefs
+*.usertasks
+*.vscode
+.idea/
+
+# テスト結果
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResults/
+MyEngine.Tests/TestResults/
+
+# NuGet
+*.nupkg
+# NuGetパッケージフォルダは無視
+**/packages/*
+# ただし、packages.configは無視しない
+!**/packages/build/
+# NuGetのv3のプロジェクトファイル
+*.nuget.props
+*.nuget.targets
+
+# Windows固有
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS固有
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ログファイル
+*.log
+logs/
+MyEngine/logs/
+
+# クラッシュログ
+crash-*
+MyEngine/crash-*
+
+# OpenGLのシェーダーキャッシュ
+*.spv
+MyEngine/Platform/OpenGL/shaders/*.spv
+MyEngine/Platform/OpenGL/cache/
+
+# プロジェクト固有
+# テンポラリファイル
+*.tmp
+*.temp
+*.bak
+
+# ドキュメント生成
+docs/_build/
+docs/_site/
+
+# カバレッジレポート
+coverage/
+*.coverage
+*.coveragexml
+
+# プロファイリング結果
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# ローカル設定
+appsettings.*.json
+!appsettings.example.json
+
+# デバッグ用ファイル
+*.pdb 

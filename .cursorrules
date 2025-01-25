@@ -1,0 +1,63 @@
+# .cursorrules (YAML版サンプル)
+# コードスタイル／警告レベル／ユニットテスト(xUnit+Moq)などのルールをまとめる例です。
+# 実際には .editorconfig や StyleCop / Roslyn Analyzers を併用することが多いです。
+
+cursorrules:
+  code_style:
+    indent:
+      style: space
+      size: 4
+    end_of_line: lf
+    charset: utf-8
+    trim_trailing_whitespace: true
+    insert_final_newline: true
+    naming_conventions:
+      classes_methods_properties: PascalCase
+      fields_variables: camelCase
+      constants: UPPER_CASE_SNAKE_CASE
+      interfaces: I + PascalCase
+      enumerations: PascalCase
+
+  compile_warnings:
+    treat_as_errors: true      # <TreatWarningsAsErrors>true</TreatWarningsAsErrors> を推奨
+    nullable_reference_types: true   # <Nullable>enable</Nullable>
+    disallow_unused_using: true # 未使用usingや未使用変数は警告に
+
+  tests:
+    framework: xUnit
+    mocking:
+      library: Moq
+      version: "4.18.x"  # 例: 最新安定版を使用
+    naming:
+      test_method_name_pattern: "<対象>_<条件>_<期待結果>"
+      example: "Draw_ShouldInvokeGraphicsCall_Once"
+    structure:
+      # 例: ソースフォルダMyEngine/Platform/OpenGL/SpriteBatch.cs
+      #   → テストフォルダMyEngine.Tests/Platform/OpenGL/SpriteBatchTests.cs
+      mirror_source_directory: true
+    coverage:
+      # カバレッジツール(coverlet等)を導入する場合の方針
+      required: false
+      minimum_percentage: 0     # 必要に応じて閾値設定
+
+  commit_pr_flow:
+    pre_commit:
+      - "dotnet format"         # 自動整形
+      - "dotnet build"          # 警告ゼロ確認 (警告はエラー扱い)
+      - "dotnet test"           # テスト全成功を確認
+    pull_request:
+      # CIパイプラインで同じ検証を実行
+      # テストや警告がNGの場合はPRを通さない
+      required_checks:
+        - build
+        - test
+        - style_check
+
+  project_specific_rules:
+    # プロジェクト独自の追加ルール
+    # 例: アクセス修飾子のガイドライン、拡張メソッドの置き場所、ログポリシー等
+    - "アクセス修飾子はpublic最小限"
+    - "拡張メソッドはExtensionsフォルダに配置"
+    - "IDisposable実装時のDisposeパターン遵守"
+    - "ILoggerログレベル設定指針"
+
