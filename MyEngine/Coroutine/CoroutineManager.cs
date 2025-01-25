@@ -153,16 +153,18 @@ namespace MyEngine.Coroutine
                         info.Child = null;
                         info.State = CoroutineState.待機中;
                         OnCoroutineStateChanged(info);
-                        return true;  // 親コルーチンの進行は次のフレームで行う
+                        info.NeedsAdvance = true;  // 次のフレームで進行するようマーク
+                        return true;
                     }
                     return true;
                 }
 
-                // 待機状態の親コルーチンを進行
-                if (info.State == CoroutineState.待機中 && info.Child == null)
+                // 待機状態かつ進行が必要な場合
+                if (info.State == CoroutineState.待機中 && info.NeedsAdvance)
                 {
                     info.State = CoroutineState.実行中;
                     OnCoroutineStateChanged(info);
+                    info.NeedsAdvance = false;
                     return info.Routine.MoveNext();
                 }
 
