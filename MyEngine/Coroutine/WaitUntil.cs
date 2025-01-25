@@ -1,28 +1,30 @@
+using System;
+
 namespace MyEngine.Coroutine;
 
-public class WaitUntil : IYieldInstruction
+public class WaitUntil : IYieldInstruction, IDisposable
 {
     private readonly Func<bool> _predicate;
-    private bool _isCompleted;
+    private bool _isDisposed;
 
     public WaitUntil(Func<bool> predicate)
     {
-        _predicate = predicate;
-        _isCompleted = false;
+        _predicate = predicate ?? throw new ArgumentNullException(nameof(predicate));
     }
 
     public bool Update(float deltaTime)
     {
-        if (_isCompleted)
-        {
-            return true;
-        }
+        if (_isDisposed)
+            throw new ObjectDisposedException(nameof(WaitUntil));
 
-        if (_predicate())
+        return _predicate();
+    }
+
+    public void Dispose()
+    {
+        if (!_isDisposed)
         {
-            _isCompleted = true;
-            return true;
+            _isDisposed = true;
         }
-        return false;
     }
 } 
