@@ -8,247 +8,247 @@ namespace MyEngine.Coroutine;
 
 public class CoroutineManager
 {
-    private readonly ILogger<CoroutineManager> _logger;
     private readonly List<CoroutineInfo> _coroutines = new();
     private readonly List<CoroutineInfo> _coroutinesToRemove = new();
+    private readonly ILogger _logger;
 
-    public event EventHandler<CoroutineInfo>? CoroutineStateChanged;
+    public event Action<CoroutineInfo>? CoroutineStateChanged;
 
     public int ActiveCoroutineCount => _coroutines.Count;
 
-    public CoroutineManager(ILogger<CoroutineManager> logger)
+    public CoroutineManager(ILogger logger)
     {
         _logger = logger;
     }
 
-    private void OnCoroutineStateChanged(CoroutineInfo info)
-    {
-        _logger.LogDebug($"コルーチン状態変更: {info.State}");
-        CoroutineStateChanged?.Invoke(this, info);
-    }
-
     public void Start(IEnumerator routine)
     {
-        _logger.LogDebug("Starting coroutine");
-        var info = new CoroutineInfo(routine);
+        var info = new CoroutineInfo(routine, _logger);
+        info.OnStateChanged += OnCoroutineStateChanged;
         _coroutines.Add(info);
-        info.OnStateChanged += (coroutine) => OnCoroutineStateChanged(coroutine);
-        
+        _logger.LogDebug("Starting coroutine");
         OnCoroutineStateChanged(info);
-        ExecuteNextStep(info);
     }
 
     public void Stop(IEnumerator routine)
     {
-        var info = _coroutines.Find(x => x.Routine == routine);
+        var info = _coroutines.FirstOrDefault(c => c.Routine == routine);
         if (info != null)
         {
-            StopCoroutine(info);
+            StopCoroutineInternal(info);
+            _coroutines.Remove(info);
+            _coroutinesToRemove.Remove(info);
         }
-    }
-
-    private void StopCoroutine(CoroutineInfo info)
-    {
-        foreach (var child in info.Children.ToList())
-        {
-            StopCoroutine(child);
-        }
-        info.SetState(CoroutineState.Completed);
-        _coroutinesToRemove.Add(info);
     }
 
     public void StopAll()
     {
-        foreach (var info in _coroutines.ToList())
+        foreach (var coroutine in _coroutines.ToList())
         {
-            StopCoroutine(info);
+            StopCoroutineInternal(coroutine);
         }
         _coroutines.Clear();
         _coroutinesToRemove.Clear();
     }
 
+    private void StopCoroutineInternal(CoroutineInfo info)
+    {
+        foreach (var child in info.Children.ToList())
+        {
+            StopCoroutineInternal(child);
+            info.RemoveChild(child);
+        }
+        info.SetState(CoroutineState.Completed);
+    }
+
     public void Update(float deltaTime)
     {
-        // ルートコルーチンを優先して処理
-        foreach (var info in _coroutines.Where(x => x.Parent == null).ToList())
+        _coroutinesToRemove.Clear();
+
+        // アクティブなコルーチンを処理
+        var coroutines = _coroutines.ToList();
+        foreach (var coroutine in coroutines)
         {
-            ExecuteCoroutine(info, deltaTime);
+            if (coroutine.State != CoroutineState.Completed)
+            {
+                ProcessCoroutine(coroutine, deltaTime);
+            }
         }
 
         // 完了したコルーチンを削除
-        foreach (var completed in _coroutinesToRemove)
+        foreach (var coroutine in _coroutinesToRemove)
         {
-            _coroutines.Remove(completed);
-        }
-        _coroutinesToRemove.Clear();
-    }
-
-    public void Pause(IEnumerator routine)
-    {
-        var info = _coroutines.Find(c => c.Routine == routine);
-        if (info != null)
-        {
-            PauseCoroutine(info);
+            _coroutines.Remove(coroutine);
         }
     }
 
-    private void PauseCoroutine(CoroutineInfo info)
+    private bool ProcessCoroutine(CoroutineInfo info, float deltaTime)
     {
-        if (info.State != CoroutineState.Paused)
+        if (info.State == CoroutineState.Paused || info.State == CoroutineState.Completed)
         {
-            // 子コルーチンを先に一時停止
-            foreach (var child in info.Children)
-            {
-                PauseCoroutine(child);
-            }
-
-            info.SetState(CoroutineState.Paused);
-        }
-    }
-
-    public void Resume(IEnumerator routine)
-    {
-        var info = _coroutines.Find(c => c.Routine == routine);
-        if (info != null)
-        {
-            ResumeCoroutine(info);
-        }
-    }
-
-    private void ResumeCoroutine(CoroutineInfo info)
-    {
-        if (info.State == CoroutineState.Paused)
-        {
-            info.SetState(CoroutineState.Running);
-
-            // 子コルーチンを後で再開
-            foreach (var child in info.Children)
-            {
-                ResumeCoroutine(child);
-            }
-        }
-    }
-
-    private bool ExecuteCoroutine(CoroutineInfo info, float deltaTime)
-    {
-        try
-        {
-            return ExecuteCoroutineInternal(info, deltaTime);
-        }
-        catch (Exception ex)
-        {
-            LogCoroutineError(info, ex);
-            info.SetState(CoroutineState.Completed);
-            return false;
-        }
-    }
-
-    private bool ExecuteCoroutineInternal(CoroutineInfo info, float deltaTime)
-    {
-        // 一時停止中は処理しない
-        if (info.State == CoroutineState.Paused)
-        {
-            return true;
+            return info.State != CoroutineState.Completed;
         }
 
         // 子コルーチンの処理
-        var hasActiveChildren = ProcessChildren(info, deltaTime);
-        if (hasActiveChildren)
+        var hasRunningChildren = false;
+        foreach (var child in info.Children.ToList())
         {
+            var childResult = ProcessCoroutine(child, deltaTime);
+            if (!childResult || child.State == CoroutineState.Completed)
+            {
+                info.RemoveChild(child);
+                if (!_coroutinesToRemove.Contains(child))
+                {
+                    _coroutinesToRemove.Add(child);
+                }
+            }
+            else if (child.State == CoroutineState.Running || child.State == CoroutineState.Waiting)
+            {
+                hasRunningChildren = true;
+            }
+        }
+
+        // 子コルーチンが実行中の場合は待機
+        if (hasRunningChildren)
+        {
+            if (info.State != CoroutineState.Waiting)
+            {
+                info.SetState(CoroutineState.Waiting);
+            }
             return true;
         }
 
         // YieldInstructionの処理
         if (info.CurrentYieldInstruction != null)
         {
-            if (!info.CurrentYieldInstruction.Update(deltaTime))
+            var yieldResult = info.CurrentYieldInstruction.Update(deltaTime);
+            if (!yieldResult)
             {
+                if (info.State != CoroutineState.Waiting)
+                {
+                    info.SetState(CoroutineState.Waiting);
+                }
                 return true;
             }
+            
             info.SetYieldInstruction(null);
+            if (info.State != CoroutineState.Running)
+            {
+                info.SetState(CoroutineState.Running);
+            }
         }
 
         // コルーチンの次のステップを実行
-        return ExecuteNextStep(info);
-    }
-
-    private bool ProcessChildren(CoroutineInfo info, float deltaTime)
-    {
-        var hasActiveChildren = false;
-        var completedChildren = new List<CoroutineInfo>();
-
-        foreach (var child in info.Children.ToList())
-        {
-            if (!ExecuteCoroutine(child, deltaTime))
-            {
-                completedChildren.Add(child);
-            }
-            else if (child.State != CoroutineState.Completed)
-            {
-                hasActiveChildren = true;
-            }
-        }
-
-        foreach (var child in completedChildren)
-        {
-            info.RemoveChild(child);
-            _coroutinesToRemove.Add(child);
-        }
-
-        return hasActiveChildren;
-    }
-
-    private bool ExecuteNextStep(CoroutineInfo info)
-    {
-        if (info.State != CoroutineState.Running)
-        {
-            return true;
-        }
-
         try
         {
             if (!info.Routine.MoveNext())
             {
                 info.SetState(CoroutineState.Completed);
-                _coroutinesToRemove.Add(info);
+                if (!_coroutinesToRemove.Contains(info))
+                {
+                    _coroutinesToRemove.Add(info);
+                }
                 return false;
             }
 
-            var current = info.Routine.Current;
-            if (current is IEnumerator childRoutine)
+            // 子コルーチンの生成
+            if (info.Routine.Current is IEnumerator childRoutine)
             {
-                var child = new CoroutineInfo(childRoutine, info);
+                var child = new CoroutineInfo(childRoutine, _logger);
+                child.OnStateChanged += OnCoroutineStateChanged;
                 info.AddChild(child);
-                child.OnStateChanged += (coroutine) => OnCoroutineStateChanged(coroutine);
-                _coroutines.Add(child);
-                OnCoroutineStateChanged(child);
+                if (!_coroutines.Contains(child))
+                {
+                    _coroutines.Add(child);
+                    if (info.State == CoroutineState.Paused)
+                    {
+                        child.SetState(CoroutineState.Paused);
+                    }
+                    else
+                    {
+                        ProcessCoroutine(child, deltaTime);
+                    }
+                }
                 return true;
             }
 
-            if (current is IYieldInstruction yieldInstruction)
+            // YieldInstructionの設定
+            if (info.Routine.Current is IYieldInstruction yieldInstruction)
             {
                 info.SetYieldInstruction(yieldInstruction);
+                ProcessCoroutine(info, deltaTime);
                 return true;
             }
 
+            // 通常のステップ実行
+            if (info.State != CoroutineState.Running)
+            {
+                info.SetState(CoroutineState.Running);
+            }
             return true;
         }
         catch (Exception ex)
         {
-            LogCoroutineError(info, ex);
+            _logger.LogError($"コルーチン実行エラー: {ex.Message}");
             info.SetState(CoroutineState.Completed);
-            _coroutinesToRemove.Add(info);
+            if (!_coroutinesToRemove.Contains(info))
+            {
+                _coroutinesToRemove.Add(info);
+            }
             return false;
         }
     }
 
-    private void LogCoroutineError(CoroutineInfo info, Exception ex)
+    private void OnCoroutineStateChanged(CoroutineInfo info)
     {
-        _logger.LogError(
-            "コルーチンエラー: State={State}, Parent={Parent}, Error={Error}",
-            info.State,
-            info.Parent?.State,
-            ex.ToString()
-        );
+        _logger.LogDebug($"コルーチン状態変更: {info.State}");
+        CoroutineStateChanged?.Invoke(info);
+    }
+
+    public void Pause(IEnumerator routine)
+    {
+        var info = _coroutines.FirstOrDefault(c => c.Routine == routine);
+        if (info != null)
+        {
+            PauseCoroutineInternal(info);
+        }
+    }
+
+    private void PauseCoroutineInternal(CoroutineInfo info)
+    {
+        if (info.State != CoroutineState.Paused && info.State != CoroutineState.Completed)
+        {
+            info.SetState(CoroutineState.Paused);
+            foreach (var child in info.Children)
+            {
+                PauseCoroutineInternal(child);
+            }
+        }
+    }
+
+    public void Resume(IEnumerator routine)
+    {
+        var info = _coroutines.FirstOrDefault(c => c.Routine == routine);
+        if (info != null)
+        {
+            ResumeCoroutineInternal(info);
+        }
+    }
+
+    private void ResumeCoroutineInternal(CoroutineInfo info)
+    {
+        if (info.State == CoroutineState.Paused)
+        {
+            var newState = info.CurrentYieldInstruction != null ? CoroutineState.Waiting : CoroutineState.Running;
+            info.SetState(newState);
+            foreach (var child in info.Children)
+            {
+                ResumeCoroutineInternal(child);
+            }
+            if (newState == CoroutineState.Waiting)
+            {
+                ProcessCoroutine(info, 0);
+            }
+        }
     }
 } 

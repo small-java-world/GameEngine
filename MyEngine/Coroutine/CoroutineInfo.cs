@@ -1,49 +1,86 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
 
 namespace MyEngine.Coroutine;
 
 public class CoroutineInfo
 {
-    public event Action<CoroutineInfo>? OnStateChanged;
+    private readonly ILogger _logger;
+    private readonly List<CoroutineInfo> _children = new();
+    private CoroutineState _state;
+    private IYieldInstruction? _currentYieldInstruction;
 
     public IEnumerator Routine { get; }
-    public CoroutineState State { get; private set; }
-    public CoroutineInfo? Parent { get; }
+    public CoroutineState State => _state;
+    public CoroutineInfo? Parent { get; private set; }
     public IReadOnlyList<CoroutineInfo> Children => _children;
-    public IYieldInstruction? CurrentYieldInstruction { get; private set; }
+    public IYieldInstruction? CurrentYieldInstruction => _currentYieldInstruction;
 
-    private readonly List<CoroutineInfo> _children = new();
+    public event Action<CoroutineInfo>? OnStateChanged;
 
-    public CoroutineInfo(IEnumerator routine, CoroutineInfo? parent = null)
+    public CoroutineInfo(IEnumerator routine, ILogger logger)
     {
         Routine = routine;
-        Parent = parent;
-        State = CoroutineState.Running;
+        _logger = logger;
+        _state = CoroutineState.Running;
     }
 
-    public void AddChild(CoroutineInfo child)
+    internal void AddChild(CoroutineInfo child)
     {
-        _children.Add(child);
-    }
-
-    public void RemoveChild(CoroutineInfo child)
-    {
-        _children.Remove(child);
-    }
-
-    public void SetState(CoroutineState state)
-    {
-        if (State != state)
+        if (!_children.Contains(child))
         {
-            State = state;
+            child.Parent?.RemoveChild(child);
+            child.Parent = this;
+            _children.Add(child);
+        }
+    }
+
+    internal void RemoveChild(CoroutineInfo child)
+    {
+        if (_children.Contains(child))
+        {
+            child.Parent = null;
+            _children.Remove(child);
+        }
+    }
+
+    internal void SetState(CoroutineState newState)
+    {
+        if (_state != newState)
+        {
+            var oldState = _state;
+            _state = newState;
+
+            if (newState == CoroutineState.Paused)
+            {
+                foreach (var child in _children.ToList())
+                {
+                    child.SetState(CoroutineState.Paused);
+                }
+            }
+            else if (oldState == CoroutineState.Paused && newState == CoroutineState.Running)
+            {
+                foreach (var child in _children.ToList())
+                {
+                    child.SetState(CoroutineState.Running);
+                }
+            }
+
             OnStateChanged?.Invoke(this);
         }
     }
 
-    public void SetYieldInstruction(IYieldInstruction? instruction)
+    internal void SetYieldInstruction(IYieldInstruction? instruction)
     {
-        CurrentYieldInstruction = instruction;
+        if (_currentYieldInstruction != instruction)
+        {
+            _currentYieldInstruction = instruction;
+            if (instruction != null)
+            {
+                SetState(CoroutineState.Waiting);
+            }
+        }
     }
 } 
