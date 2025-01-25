@@ -103,15 +103,6 @@ namespace MyEngine.Coroutine
                 if (!result)
                 {
                     info.RemoveChild(childInfo);
-                    info.State = CoroutineState.Running;
-                    OnCoroutineStateChanged(info);
-                    result = info.Routine.MoveNext();
-                    if (!result)
-                    {
-                        info.State = CoroutineState.Completed;
-                        OnCoroutineStateChanged(info);
-                        _coroutines.Remove(info);
-                    }
                     return;
                 }
                 
@@ -245,30 +236,53 @@ namespace MyEngine.Coroutine
                     info.RemoveChild(child);
                 }
 
-                // If waiting and has no running children, resume parent
-                if (info.State == CoroutineState.Waiting && !hasRunningChildren)
+                // Handle parent coroutine state
+                if (info.State == CoroutineState.Waiting)
                 {
-                    info.State = CoroutineState.Running;
-                    OnCoroutineStateChanged(info);
+                    if (!hasRunningChildren)
+                    {
+                        info.State = CoroutineState.Running;
+                        OnCoroutineStateChanged(info);
+                        var result = info.Routine.MoveNext();
+                        if (!result)
+                        {
+                            return false;
+                        }
+
+                        var current = info.Routine.Current;
+                        if (current is IEnumerator nestedRoutine)
+                        {
+                            var childInfo = new CoroutineInfo(nestedRoutine)
+                            {
+                                State = CoroutineState.Initializing
+                            };
+                            info.AddChild(childInfo);
+                            OnCoroutineStateChanged(childInfo);
+
+                            childInfo.State = CoroutineState.Running;
+                            OnCoroutineStateChanged(childInfo);
+                            result = childInfo.Routine.MoveNext();
+                            if (!result)
+                            {
+                                info.RemoveChild(childInfo);
+                                return true;
+                            }
+
+                            info.State = CoroutineState.Waiting;
+                            OnCoroutineStateChanged(info);
+                        }
+                    }
+                    return true;
+                }
+                else if (info.State == CoroutineState.Running)
+                {
                     var result = info.Routine.MoveNext();
                     if (!result)
                     {
                         return false;
                     }
-                    var current = info.Routine.Current;
-                    if (current is IEnumerator || current is IYieldInstruction)
-                    {
-                        return ProcessCoroutine(info, deltaTime);
-                    }
-                    return true;
-                }
 
-                // If running, process current state
-                if (info.State == CoroutineState.Running)
-                {
                     var current = info.Routine.Current;
-
-                    // Handle nested coroutine
                     if (current is IEnumerator nestedRoutine)
                     {
                         var childInfo = new CoroutineInfo(nestedRoutine)
@@ -277,61 +291,19 @@ namespace MyEngine.Coroutine
                         };
                         info.AddChild(childInfo);
                         OnCoroutineStateChanged(childInfo);
-                        
+
                         childInfo.State = CoroutineState.Running;
                         OnCoroutineStateChanged(childInfo);
-                        var result = childInfo.Routine.MoveNext();
+                        result = childInfo.Routine.MoveNext();
                         if (!result)
                         {
                             info.RemoveChild(childInfo);
                             return true;
                         }
-                        
+
                         info.State = CoroutineState.Waiting;
                         OnCoroutineStateChanged(info);
-                        return true;
                     }
-
-                    // Handle yield instruction
-                    if (current is IYieldInstruction yieldInstruction)
-                    {
-                        if (info.State != CoroutineState.Waiting)
-                        {
-                            info.State = CoroutineState.Waiting;
-                            OnCoroutineStateChanged(info);
-                        }
-
-                        if (yieldInstruction.Update(deltaTime))
-                        {
-                            info.State = CoroutineState.Running;
-                            OnCoroutineStateChanged(info);
-                            var result = info.Routine.MoveNext();
-                            if (!result)
-                            {
-                                return false;
-                            }
-                            var nextCurrent = info.Routine.Current;
-                            if (nextCurrent is IEnumerator || nextCurrent is IYieldInstruction)
-                            {
-                                return ProcessCoroutine(info, deltaTime);
-                            }
-                            return true;
-                        }
-                        return true;
-                    }
-
-                    // Continue execution
-                    var moveResult = info.Routine.MoveNext();
-                    if (!moveResult)
-                    {
-                        return false;
-                    }
-                    var nextValue = info.Routine.Current;
-                    if (nextValue is IEnumerator || nextValue is IYieldInstruction)
-                    {
-                        return ProcessCoroutine(info, deltaTime);
-                    }
-                    return true;
                 }
 
                 return true;
